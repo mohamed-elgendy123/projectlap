@@ -406,6 +406,17 @@ void houseReport(void)
         }
 }
 
+        uint32_t total_adc = sumAdc(houseRooms(), ROOM_COUNT);
+        printf("\n  Hottest room : %s (%u C)\n",
+            houseRoom(hot_idx)->name, tempC(houseRoom(hot_idx)->adc));
+        printf("  Coldest room : %s (%u C)\n",
+            houseRoom(cold_idx)->name, tempC(houseRoom(cold_idx)->adc));
+        printf("  Raw ADC sum  : %lu\n", (unsigned long)total_adc);
+        printf("  Average temp : %u C\n",
+            tempC((uint16_t)(total_adc / ROOM_COUNT)));
+        pauseKey();
+    }
+
 
 /* ==========================================================================
  *  [ 5 / 5 ]   YOUR WORK HERE  —  runAutomation()                    FR-10
@@ -442,15 +453,37 @@ void houseReport(void)
  */
 void runAutomation(void)
 {
-    uint32_t total_adc = sumAdc(houseRooms(), ROOM_COUNT);
-    uint16_t avg_adc   = (uint16_t)(total_adc / ROOM_COUNT);
-    uint16_t avg_temp  = tempC(avg_adc);
+    char trace[ROOM_COUNT][96];
+    uint8_t changed = 0U;
 
-    printf("  ----------------------------------------\n");
-    printf("  Hottest room : %s (%u C)\n", houseRoom(hot_idx)->name, tempC(houseRoom(hot_idx)->adc));
-    printf("  Coldest room : %s (%u C)\n", houseRoom(cold_idx)->name, tempC(houseRoom(cold_idx)->adc));
-    printf("  Raw ADC sum  : %lu\n", (unsigned long)total_adc);
-    printf("  Average temp : %u C\n", avg_temp);
+    for (uint8_t i = 0U; i < ROOM_COUNT; i++)
+    {
+        Room_t *r = houseRoom(i);
+        uint8_t before = r->status;
+
+        if (READ_BIT(before, BIT_AUTO) == 0U)
+        {
+            snprintf(trace[i], sizeof trace[i], "%s  %u C   skipped (MANUAL)",
+                     r->name, tempC(r->adc));
+        }
+        else
+        {
+            int did_change = applyRules(r);
+            uint8_t after = r->status;
+            changed = (uint8_t)(changed + (did_change != 0));
+            snprintf(trace[i], sizeof trace[i],
+                     "%s  %u C   0b%02X -> 0b%02X%s",
+                     r->name, tempC(r->adc), before, after,
+                     did_change ? "  *" : "");
+        }
+    }
+
+    printf("\n  AUTOMATION\n  ----------------------------------------\n");
+    for (uint8_t i = 0U; i < ROOM_COUNT; i++)
+    {
+        printf("  %s\n", trace[i]);
+    }
+    printf("  %u room(s) changed.\n", changed);
 
     pauseKey();
 }
