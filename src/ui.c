@@ -361,7 +361,7 @@ void switchDevice(void)
  */
 void houseReport(void)
 {
-    /* 1. إعادة رسم البيت أولاً دون تمييز غرفة محددة */
+   /* 1. إعادة رسم البيت أولاً دون تمييز غرفة محددة */
     render(-1);
 
     /* 2. قراءة العدادات الأربعة */
@@ -404,17 +404,20 @@ void houseReport(void)
         {
             cold_idx = i;
         }
-}
+    }
 
-        uint32_t total_adc = sumAdc(houseRooms(), ROOM_COUNT);
-        printf("\n  Hottest room : %s (%u C)\n",
-            houseRoom(hot_idx)->name, tempC(houseRoom(hot_idx)->adc));
-        printf("  Coldest room : %s (%u C)\n",
-            houseRoom(cold_idx)->name, tempC(houseRoom(cold_idx)->adc));
-        printf("  Raw ADC sum  : %lu\n", (unsigned long)total_adc);
-        printf("  Average temp : %u C\n",
-            tempC((uint16_t)(total_adc / ROOM_COUNT)));
-        pauseKey();
+    /* 5. حساب متوسط درجات الحرارة باستخدام دالة sumAdc التكرارية */
+    uint32_t total_adc = sumAdc(houseRooms(), ROOM_COUNT);
+    uint16_t avg_adc   = (uint16_t)(total_adc / ROOM_COUNT);
+    uint16_t avg_temp  = tempC(avg_adc);
+
+    printf("  ----------------------------------------\n");
+    printf("  Hottest room : %s (%u C)\n", houseRoom(hot_idx)->name, tempC(houseRoom(hot_idx)->adc));
+    printf("  Coldest room : %s (%u C)\n", houseRoom(cold_idx)->name, tempC(houseRoom(cold_idx)->adc));
+    printf("  Raw ADC sum  : %lu\n", (unsigned long)total_adc);
+    printf("  Average temp : %u C\n", avg_temp);
+
+    pauseKey();
     }
 
 
@@ -454,36 +457,65 @@ void houseReport(void)
 void runAutomation(void)
 {
     char trace[ROOM_COUNT][96];
-    uint8_t changed = 0U;
+    uint8_t changed_count = 0U;
 
+    /* 1. المرور على الغرف الست وتسجيل الأثر قبل وبعد تطبيق القواعد */
     for (uint8_t i = 0U; i < ROOM_COUNT; i++)
     {
         Room_t *r = houseRoom(i);
         uint8_t before = r->status;
+        uint16_t temp  = tempC(r->adc);
 
+        /* إذا كانت الغرفة يدوية، نتخطاها */
         if (READ_BIT(before, BIT_AUTO) == 0U)
         {
-            snprintf(trace[i], sizeof trace[i], "%s  %u C   skipped (MANUAL)",
-                     r->name, tempC(r->adc));
+            snprintf(trace[i], sizeof(trace[i]), "  %-10s %3u C   skipped (MANUAL)", r->name, temp);
         }
         else
         {
-            int did_change = applyRules(r);
-            uint8_t after = r->status;
-            changed = (uint8_t)(changed + (did_change != 0));
-            snprintf(trace[i], sizeof trace[i],
-                     "%s  %u C   0b%02X -> 0b%02X%s",
-                     r->name, tempC(r->adc), before, after,
-                     did_change ? "  *" : "");
+            /* تطبيق القواعد ورصد التغيير */
+            uint8_t changed = applyRules(r);
+            changed_count += changed;
+
+            /* تجهيز تمثيل البتات الثنائية قبل وبعد */
+            char bin_before[9];
+            char bin_after[9];
+
+            for (int8_t b = 7; b >= 0; b--)
+            {
+                bin_before[7 - b] = READ_BIT(before, b) ? '1' : '0';
+                bin_after[7 - b]  = READ_BIT(r->status, b) ? '1' : '0';
+            }
+            bin_before[8] = '\0';
+            bin_after[8]  = '\0';
+
+            /* وضع علامة * فقط إذا تغيرت حالة الغرفة بالفعل */
+            if (changed != 0U)
+            {
+                snprintf(trace[i], sizeof(trace[i]), "  %-10s %3u C   0b%s -> 0b%s  *",
+                         r->name, temp, bin_before, bin_after);
+            }
+            else
+            {
+                snprintf(trace[i], sizeof(trace[i]), "  %-10s %3u C   0b%s -> 0b%s",
+                         r->name, temp, bin_before, bin_after);
+            }
         }
     }
 
-    printf("\n  AUTOMATION\n  ----------------------------------------\n");
+    /* 2. ضبط رسالة الحالة وإعادة رسم البيت بالحالة الجديدة */
+    statusSet(C_OK, "Automation pass complete.");
+    render(-1);
+
+    /* 3. طباعة تفاصيل كل غرفة */
+    printf("\n  AUTOMATION TRACE\n");
+    printf("  --------------------------------------------------------\n");
     for (uint8_t i = 0U; i < ROOM_COUNT; i++)
     {
-        printf("  %s\n", trace[i]);
+        printf("%s\n", trace[i]);
     }
-    printf("  %u room(s) changed.\n", changed);
+    printf("  --------------------------------------------------------\n");
+    printf("  %u room(s) changed.\n", (unsigned)changed_count);
 
     pauseKey();
 }
