@@ -142,7 +142,31 @@ uint8_t pickRoom(void)
  */
 void setOccupancy(void)
 {
-    printf("  TODO setOccupancy\n");
+    /* 1. اختيار الغرفة وفحص الإدخال */
+    uint8_t i = pickRoom();
+    if (i == 255U)
+    {
+        return;
+    }
+
+    Room_t *r = houseRoom(i);
+
+    /* 2. قلب بت الإشغال فقط باستخدام TOGGLE_BIT */
+    TOGGLE_BIT(r->status, BIT_OCCUPIED);
+
+    /* 3. طباعة رسالة توضح حالة الغرفة الجديدة */
+    if (READ_BIT(r->status, BIT_OCCUPIED) != 0U)
+    {
+        statusSet(C_OK, "%s: someone entered.", r->name);
+    }
+    else
+    {
+        statusSet(C_DIM, "%s: room is empty.", r->name);
+    }
+
+    /* 4. إعادة رسم الغرفة والانتظار لقراءة الرسالة */
+    render((int)i);
+    pauseKey();
 }
 
 
@@ -173,7 +197,37 @@ void setOccupancy(void)
  */
 void setTemperature(void)
 {
-    printf("  TODO setTemperature\n");
+    /* 1. اختيار الغرفة */
+    uint8_t i = pickRoom();
+    if (i == 255U)
+    {
+        return;
+    }
+
+    Room_t *r = houseRoom(i);
+
+    /* 2. طلب قراءة الـ ADC كـ int للتحقق من المدى بأمان */
+    printf("  Raw ADC reading (0..1023): ");
+    fflush(stdout);
+
+    int val = 0;
+    if (!readInt(&val) || val < 0 || val > (int)ADC_MAX)
+    {
+        statusSet(C_ALARM, "Invalid ADC reading (must be 0..1023).");
+        render((int)i);
+        pauseKey();
+        return;
+    }
+
+    /* 3. حفظ القيمة الجديدة بعد التأكد من صحتها */
+    r->adc = (uint16_t)val;
+
+    /* 4. إظهار رسالة بالتغيير ودرجة الحرارة المحسوبة */
+    statusSet(C_OK, "%s: ADC %u -> %u C", r->name, r->adc, tempC(r->adc));
+
+    /* 5. إعادة الرسم والانتظار */
+    render((int)i);
+    pauseKey();
 }
 
 
@@ -210,7 +264,70 @@ void setTemperature(void)
  */
 void switchDevice(void)
 {
-    printf("  TODO switchDevice\n");
+    /* 1. اختيار الغرفة */
+    uint8_t i = pickRoom();
+    if (i == 255U)
+    {
+        return;
+    }
+
+    Room_t *r = houseRoom(i);
+
+    /* 2. سؤال المستخدم عن الجهاز المطلوب */
+    printf("  Switch (1=Lamp 2=Fan 3=Auto mode): ");
+    fflush(stdout);
+
+    int choice = 0;
+    if (!readInt(&choice))
+    {
+        statusSet(C_ALARM, "Invalid input.");
+        render((int)i);
+        pauseKey();
+        return;
+    }
+
+    /* 3. تنفيذ التبديل حسب الاختيار */
+    switch (choice)
+    {
+        case 1:
+            TOGGLE_BIT(r->status, BIT_LAMP);
+            CLR_BIT(r->status, BIT_AUTO);
+            statusSet(C_LAMP, "%s: Lamp switched manually (AUTO cleared).", r->name);
+            break;
+
+        case 2:
+            TOGGLE_BIT(r->status, BIT_FAN);
+            CLR_BIT(r->status, BIT_AUTO);
+            statusSet(C_FAN, "%s: Fan switched manually (AUTO cleared).", r->name);
+            break;
+
+        case 3:
+            TOGGLE_BIT(r->status, BIT_AUTO);
+            if (READ_BIT(r->status, BIT_AUTO) != 0U)
+            {
+                statusSet(C_AUTO, "%s: Automation re-enabled.", r->name);
+            }
+            else
+            {
+                statusSet(C_MAN, "%s: Switched to MANUAL mode.", r->name);
+            }
+            break;
+
+        default:
+            statusSet(C_ALARM, "Nothing switched.");
+            render((int)i);
+            pauseKey();
+            return;
+    }
+
+    /* 4. إعادة الرسم وطباعة بايت الحالة بالنظام الثنائي والست عشري */
+    render((int)i);
+
+    printf("\n  %s status = ", r->name);
+    printBinary(r->status);
+    printf("  (0x%02X)\n", r->status);
+
+    pauseKey();
 }
 
 
@@ -244,7 +361,49 @@ void switchDevice(void)
  */
 void houseReport(void)
 {
-    printf("  TODO houseReport\n");
+    /* 1. إعادة رسم البيت أولاً دون تمييز غرفة محددة */
+    render(-1);
+
+    /* 2. قراءة العدادات الأربعة */
+    uint8_t lamps    = countRoomsWith(BIT_LAMP);
+    uint8_t fans     = countRoomsWith(BIT_FAN);
+    uint8_t occupied = countRoomsWith(BIT_OCCUPIED);
+    uint8_t alarms   = countRoomsWith(BIT_ALARM);
+
+    printf("\n  HOUSE REPORT\n");
+    printf("  ----------------------------------------\n");
+
+    /* 3. رسم الأشرطة الأربعة باستخدام drawBar المعطاة */
+    printf("  Lamps ON   %u/%u  ", lamps, (unsigned)ROOM_COUNT);
+    drawBar(lamps, ROOM_COUNT, REPORT_BAR_W, C_LAMP);
+    putchar('\n');
+
+    printf("  Fans ON    %u/%u  ", fans, (unsigned)ROOM_COUNT);
+    drawBar(fans, ROOM_COUNT, REPORT_BAR_W, C_FAN);
+    putchar('\n');
+
+    printf("  Occupied   %u/%u  ", occupied, (unsigned)ROOM_COUNT);
+    drawBar(occupied, ROOM_COUNT, REPORT_BAR_W, C_OK);
+    putchar('\n');
+
+    printf("  Alarms     %u/%u  ", alarms, (unsigned)ROOM_COUNT);
+    drawBar(alarms, ROOM_COUNT, REPORT_BAR_W, C_ALARM);
+    putchar('\n');
+
+    /* 4. البحث عن أعلى وأقل غرفة في درجة الحرارة بالاسم */
+    uint8_t hot_idx  = 0U;
+    uint8_t cold_idx = 0U;
+
+    for (uint8_t i = 1U; i < ROOM_COUNT; i++)
+    {
+        if (houseRoom(i)->adc > houseRoom(hot_idx)->adc)
+        {
+            hot_idx = i;
+        }
+        if (houseRoom(i)->adc < houseRoom(cold_idx)->adc)
+        {
+            cold_idx = i;
+        }
 }
 
 
@@ -283,5 +442,15 @@ void houseReport(void)
  */
 void runAutomation(void)
 {
-    printf("  TODO runAutomation\n");
+    uint32_t total_adc = sumAdc(houseRooms(), ROOM_COUNT);
+    uint16_t avg_adc   = (uint16_t)(total_adc / ROOM_COUNT);
+    uint16_t avg_temp  = tempC(avg_adc);
+
+    printf("  ----------------------------------------\n");
+    printf("  Hottest room : %s (%u C)\n", houseRoom(hot_idx)->name, tempC(houseRoom(hot_idx)->adc));
+    printf("  Coldest room : %s (%u C)\n", houseRoom(cold_idx)->name, tempC(houseRoom(cold_idx)->adc));
+    printf("  Raw ADC sum  : %lu\n", (unsigned long)total_adc);
+    printf("  Average temp : %u C\n", avg_temp);
+
+    pauseKey();
 }
